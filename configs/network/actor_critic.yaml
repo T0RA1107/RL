@@ -1,0 +1,14 @@
+actor:
+  _target_: src.networks.actor_critic.GaussianActor
+  hidden_dims: [64, 64]
+  activation:
+    _target_: hydra.utils.get_method
+    path: src.networks.activation.mish  # flax.linen.relu
+  log_std_min: -10
+  log_std_max: 5
+critic:
+  _target_: src.networks.actor_critic.ValueCritic
+  hidden_dims: [64, 64]
+  activation:
+    _target_: hydra.utils.get_method
+    path: src.networks.activation.mish  #flax.linen.relu

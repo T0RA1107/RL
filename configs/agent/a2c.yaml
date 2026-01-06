@@ -1,0 +1,13 @@
+_target_: src.agents.a2c.A2CAgent
+_recursive_: False
+network_cfg:
+  actor: ${network.actor}
+  critic: ${network.critic}
+optimizer_cfg: ${optimizer}
+batch_size: 16
+discount_gamma: 0.99
+entropy_coef: 0.01
+value_loss_coef: 1
+max_grad_norm: 0.5
+max_episode_length: 200
+seed: ${seed}

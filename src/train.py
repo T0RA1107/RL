@@ -1,0 +1,316 @@
+"""Training script for RL agents."""
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+import hydra
+from omegaconf import DictConfig
+import jax
+import jax.numpy as jnp
+import numpy as np
+from loguru import logger
+
+from src.utils.logger import init_logger
+from src.utils.wandb_logger import init_wandb, log_metrics, finish_wandb
+
+
+class RLTrainer:
+    """RL training orchestrator."""
+
+    def __init__(self, cfg: DictConfig):
+        """Initialize trainer.
+
+        Args:
+            cfg: Hydra configuration
+        """
+        # Initialize WandB
+        self.wandb_enabled = cfg.wandb.enabled
+        self.wandb_run = init_wandb(cfg)
+
+        # Set random seed
+        self.rng = jax.random.PRNGKey(cfg.seed)
+
+        # Initialize environment
+        logger.info(f"Initializing environment: {cfg.environment._target_}")
+        self.environment = hydra.utils.instantiate(cfg.environment)
+
+        # Initialize agent with environment dimensions
+        logger.info(f"Initializing agent: {cfg.agent._target_}")
+        observation_dim = self.environment.observation_dim
+        action_dim = self.environment.action_dim
+        self.agent = hydra.utils.instantiate(
+            cfg.agent,
+            observation_dim=observation_dim,
+            action_dim=action_dim,
+        )
+
+        # Training configuration
+        self.num_episodes = cfg.training.num_episodes
+        self.max_steps_per_episode = cfg.training.max_steps_per_episode
+        self.eval_frequency = cfg.training.eval_frequency
+        self.eval_episodes = cfg.training.eval_episodes
+
+        # Checkpoint configuration
+        self.checkpoint_save_frequency = cfg.checkpoint.save_frequency
+        self.checkpoint_dir = Path(cfg.path.run_dir) / cfg.path.ckpt_dir
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        # Metrics tracking
+        self.episode_rewards = []
+        self.episode_lengths = []
+
+        logger.info("Trainer initialized successfully")
+
+    def run_episode(self, training: bool = True) -> tuple[float, int]:
+        """Run a single episode (supports both on-policy and off-policy).
+
+        Args:
+            training: Whether in training mode
+
+        Returns:
+            Tuple of (total_reward, episode_length)
+        """
+        # Detect if agent is on-policy (has rollout_buffer) or off-policy (has replay_buffer)
+        is_onpolicy = hasattr(self.agent, 'rollout_buffer')
+
+        if is_onpolicy and training:
+            return self._run_episode_onpolicy(training)
+        else:
+            return self._run_episode_offpolicy(training)
+
+    def _run_episode_offpolicy(self, training: bool = True) -> tuple[float, int]:
+        """Run episode for off-policy algorithms.
+
+        Args:
+            training: Whether in training mode
+
+        Returns:
+            Tuple of (total_reward, episode_length)
+        """
+        # Reset environment
+        self.rng, reset_rng = jax.random.split(self.rng)
+        obs, env_state = self.environment.reset(reset_rng)
+
+        episode_reward = 0.0
+        episode_length = 0
+        done = False
+        loss_info = {}
+
+        while not done and episode_length < self.max_steps_per_episode:
+            # Select action
+            self.rng, action_rng = jax.random.split(self.rng)
+            action, _, _ = self.agent.select_action(
+                obs, action_rng, training=training
+            )
+            # Step environment
+            self.rng, step_rng = jax.random.split(self.rng)
+            next_obs, env_state, reward, done, info = self.environment.step(
+                env_state, action, step_rng
+            )
+
+            # Store transition in replay buffer (only during training)
+            if training:
+                self.agent.buffer.add(obs, action, float(reward), next_obs, bool(done))
+
+            # Update agent (only during training and after learning_starts)
+            if training and len(self.agent.buffer) >= self.agent.learning_starts:
+                batch = self.agent.buffer.sample(self.agent.batch_size)
+                results = self.agent.update(batch)
+                for k, v in results.items():
+                    loss_info[k] = loss_info.get(k, 0.0) + v
+
+            # Update state
+            obs = next_obs
+            episode_reward += float(reward)
+            episode_length += 1
+
+        loss_info = {k: v / max(1, episode_length) for k, v in loss_info.items()}
+        return episode_reward, episode_length, loss_info
+
+    def _run_episode_onpolicy(self, training: bool = True) -> tuple[float, int]:
+        """Run episode for on-policy algorithms.
+
+        Args:
+            training: Whether in training mode
+
+        Returns:
+            Tuple of (total_reward, episode_length)
+        """
+        # Reset environment
+        self.rng, reset_rng = jax.random.split(self.rng)
+        obs, env_state = self.environment.reset(reset_rng)
+        obs = np.array(obs)
+
+        episode_reward = 0.0
+        episode_length = 0
+        loss_info = {}
+        done = False
+
+        # Clear rollout buffer
+        self.agent.rollout_buffer.reset()
+
+        while not done and episode_length < self.max_steps_per_episode:
+            # Select action
+            self.rng, action_rng = jax.random.split(self.rng)
+            normed_action, _, _ = self.agent.select_action(
+                obs, action_rng, training=training
+            )
+
+            # Clip action to bounds (continuous)
+            if self.environment.is_continuous_action:
+                action = self.environment.scale_action(normed_action)
+
+            # Step environment
+            self.rng, step_rng = jax.random.split(self.rng)
+            next_obs, env_state, reward, done, env_info = self.environment.step(
+                env_state, action, step_rng
+            )
+
+            # Store in rollout buffer
+            if training:
+                self.agent.rollout_buffer.add(
+                    obs, normed_action, float(reward), next_obs, bool(done)
+                )
+
+            # Update state
+            obs = next_obs
+            episode_reward += reward
+            episode_length += 1
+
+            # Update agent with collected rollout
+            if training and len(self.agent.rollout_buffer) >= self.agent.batch_size:
+                # Update
+                batch = self.agent.rollout_buffer.get_batch(self.agent.batch_size)
+
+                results = self.agent.update(batch)
+                for k, v in results.items():
+                    loss_info[k] = loss_info.get(k, 0.0) + v
+
+        loss_info = {k: v / max(1, episode_length) for k, v in loss_info.items()}
+        return episode_reward, episode_length, loss_info
+
+    def evaluate(self) -> dict:
+        """Run evaluation episodes.
+
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        logger.info("Running evaluation...")
+        eval_rewards = []
+        eval_lengths = []
+
+        for _ in range(self.eval_episodes):
+            reward, length, _ = self.run_episode(training=False)
+            eval_rewards.append(reward)
+            eval_lengths.append(length)
+
+        metrics = {
+            "eval/mean_reward": float(jnp.mean(jnp.array(eval_rewards))),
+            "eval/std_reward": float(jnp.std(jnp.array(eval_rewards))),
+            "eval/mean_length": float(jnp.mean(jnp.array(eval_lengths))),
+        }
+
+        logger.info(
+            f"Evaluation: mean_reward={metrics['eval/mean_reward']:.2f} "
+            f"(±{metrics['eval/std_reward']:.2f}), "
+            f"mean_length={metrics['eval/mean_length']:.1f}"
+        )
+
+        return metrics
+
+    def save_checkpoint(self, episode: int) -> None:
+        """Save agent checkpoint.
+
+        Args:
+            episode: Current episode number
+        """
+        checkpoint_path = self.checkpoint_dir / f"checkpoint_episode_{episode}.pkl"
+        self.agent.save(str(checkpoint_path))
+        logger.info(f"Saved checkpoint: {checkpoint_path}")
+
+    def run_training(self) -> None:
+        """Run the main training loop."""
+        logger.info(f"Starting training for {self.num_episodes} episodes")
+
+        for episode in range(1, self.num_episodes + 1):
+            # Run training episode
+            episode_reward, episode_length, loss_info = self.run_episode(training=True)
+
+            # Decay epsilon
+            self.agent.decay_epsilon()
+
+            # Track metrics
+            self.episode_rewards.append(episode_reward)
+            self.episode_lengths.append(episode_length)
+
+            # Log training metrics
+            train_metrics = {
+                "episode": episode,
+                "train/episode_reward": episode_reward,
+                "train/episode_length": episode_length,
+            }
+
+            # Add agent-specific metrics (DQN has epsilon and buffer)
+            if hasattr(self.agent, 'epsilon'):
+                train_metrics["train/epsilon"] = self.agent.epsilon
+            if hasattr(self.agent, 'buffer'):
+                train_metrics["train/buffer_size"] = len(self.agent.buffer)
+
+            train_metrics.update(loss_info)
+            log_metrics(train_metrics, episode, self.wandb_enabled)
+
+            # Log to console
+            if episode % 10 == 0:
+                mean_reward = float(jnp.mean(jnp.array(self.episode_rewards[-10:])))
+                log_str = (
+                    f"Episode {episode}/{self.num_episodes} | "
+                    f"Reward: {episode_reward:.2f} | "
+                    f"Mean(10): {mean_reward:.2f} | "
+                    f"Loss: {loss_info['loss/total']:.4f}"
+                )
+                if hasattr(self.agent, 'epsilon'):
+                    log_str += f" | Epsilon: {self.agent.epsilon:.3f}"
+                if hasattr(self.agent, 'buffer'):
+                    log_str += f" | Buffer: {len(self.agent.buffer)}"
+                logger.info(log_str)
+
+            # Periodic evaluation
+            if episode % self.eval_frequency == 0:
+                eval_metrics = self.evaluate()
+                log_metrics(eval_metrics, episode, self.wandb_enabled)
+
+            # Save checkpoint
+            if episode % self.checkpoint_save_frequency == 0:
+                self.save_checkpoint(episode)
+
+        # Final evaluation
+        logger.info("Training complete! Running final evaluation...")
+        final_metrics = self.evaluate()
+        log_metrics(final_metrics, self.num_episodes, self.wandb_enabled)
+
+        # Save final checkpoint
+        self.save_checkpoint(self.num_episodes)
+
+        # Finish WandB
+        finish_wandb(self.wandb_enabled)
+
+        logger.info("Training finished successfully!")
+
+
+@hydra.main(version_base=None, config_path="../configs", config_name="train")
+@logger.catch
+def main(cfg: DictConfig):
+    """Main entry point.
+
+    Args:
+        cfg: Hydra configuration
+    """
+    init_logger(cfg)
+    trainer = RLTrainer(cfg)
+    trainer.run_training()
+
+
+if __name__ == "__main__":
+    main()

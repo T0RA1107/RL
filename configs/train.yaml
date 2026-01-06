@@ -1,0 +1,36 @@
+defaults:
+  - environment: cartpole
+  - agent: dqn
+  - network: mlp
+  - optimizer: adam
+  - logger: loguru
+  - hydra: default
+  - _self_
+
+# Training hyperparameters
+training:
+  num_episodes: 100
+  max_steps_per_episode: 500
+  eval_frequency: 50
+  eval_episodes: 10
+
+# Wandb settings
+wandb:
+  enabled: false
+  project: "rl-simple-demo"
+  entity: null  # Set to your wandb username or leave null
+  name: "${hydra:runtime.choices.agent}-${hydra:runtime.choices.environment}-${now:%Y%m%d_%H%M%S}"
+  tags: ["${hydra:runtime.choices.agent}", "${hydra:runtime.choices.environment}"]
+
+# Random seed
+seed: 42
+
+path:
+  work_dir: ${hydra:runtime.cwd}
+  run_dir: ${hydra:runtime.output_dir}
+  log_dir: "logs"
+  ckpt_dir: "ckpt"
+
+# Checkpoint settings
+checkpoint:
+  save_frequency: 100

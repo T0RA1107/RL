@@ -1,0 +1,13 @@
+from omegaconf import DictConfig
+from loguru import logger
+
+
+def init_logger(cfg: DictConfig):
+    logging_cfg = cfg.logger
+    logger.remove()
+    logger.add(
+        logging_cfg.filename,
+        backtrace=True,
+        format=logging_cfg.formatters.loguru.format,
+        level=logging_cfg.root.level,
+    )

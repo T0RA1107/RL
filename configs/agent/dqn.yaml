@@ -1,0 +1,13 @@
+_target_: src.agents.dqn.DQNAgent
+_recursive_: False
+network_cfg: ${network}
+optimizer_cfg: ${optimizer}
+discount_gamma: 0.99
+epsilon_start: 1.0
+epsilon_end: 0.01
+epsilon_decay: 0.995
+batch_size: 64
+buffer_size: 10000
+learning_starts: 1000
+target_update_frequency: 100
+seed: ${seed}

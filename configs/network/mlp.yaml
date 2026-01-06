@@ -1,0 +1,5 @@
+_target_: src.networks.mlp.MLPQNetwork
+hidden_dims: [128, 128]
+activation:
+  _target_: hydra.utils.get_method
+  path: flax.linen.relu

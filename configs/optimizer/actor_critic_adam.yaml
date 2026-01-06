@@ -1,0 +1,6 @@
+actor:
+  _target_: optax.adam
+  learning_rate: 4e-4
+critic:
+  _target_: optax.adam
+  learning_rate: 4e-3

@@ -1,0 +1,6 @@
+filename: ${hydra:runtime.output_dir}/${hydra:job.name}.log
+formatters:
+  loguru:
+    format: "<green>{time:HH:mm:ss}</green> | <level>{level}</level> | <cyan>{module}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+root:
+  level: INFO
