@@ -16,4 +16,5 @@ dependencies = [
     "wandb>=0.18.11",
     "chex>=0.1.86",
     "jaxlib>=0.8.2",
+    "pyinstrument>=5.1.2",
 ]

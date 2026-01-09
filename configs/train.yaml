@@ -25,6 +25,8 @@ wandb:
 # Random seed
 seed: 42
 
+profile: false
+
 path:
   work_dir: ${hydra:runtime.cwd}
   run_dir: ${hydra:runtime.output_dir}

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from loguru import logger
+from pyinstrument import Profiler
 
 from src.utils.logger import init_logger
 from src.utils.wandb_logger import init_wandb, log_metrics, finish_wandb
@@ -309,8 +310,20 @@ def main(cfg: DictConfig):
         cfg: Hydra configuration
     """
     init_logger(cfg)
+
+    if cfg.profile:
+        profiler = Profiler()
+        profiler.start()
+
     trainer = RLTrainer(cfg)
     trainer.run_training()
+
+    if cfg.profile:
+        profiler.stop()
+        profiler.print()
+        html_output = profiler.output_html()
+        output_path = Path(cfg.path.run_dir) / "profiling_report.html"
+        output_path.write_text(html_output)
 
 
 if __name__ == "__main__":
