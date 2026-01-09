@@ -2,6 +2,7 @@
 import hydra
 import jax
 import jax.numpy as jnp
+import optax
 import pickle
 from flax.training import train_state
 from typing import Dict, Tuple
@@ -77,7 +78,15 @@ class A2CAgent(BaseAgent):
 
         # Optimizers
         actor_tx = hydra.utils.instantiate(optimizer_cfg.actor)
+        actor_tx = optax.chain(
+            optax.clip_by_global_norm(self.max_grad_norm),
+            actor_tx,
+        )
         critic_tx = hydra.utils.instantiate(optimizer_cfg.critic)
+        critic_tx = optax.chain(
+            optax.clip_by_global_norm(self.max_grad_norm),
+            critic_tx,
+        )
 
         # TrainStates
         self.actor_state = train_state.TrainState.create(
@@ -116,7 +125,8 @@ class A2CAgent(BaseAgent):
         std = jnp.exp(log_std)
 
         # Sample action
-        action = mean + std * jax.random.normal(sample_rng, mean.shape)
+        z = jax.random.normal(sample_rng, mean.shape)
+        action = mean + std * z
 
         return action[0], None, rng
 

@@ -161,6 +161,7 @@ class RLTrainer:
             # Clip action to bounds (continuous)
             if self.environment.is_continuous_action:
                 action = self.environment.scale_action(normed_action)
+                normed_action = self.environment.normalize_action(action)
 
             # Step environment
             self.rng, step_rng = jax.random.split(self.rng)
