@@ -27,6 +27,7 @@ class A2CAgent(BaseAgent):
         value_loss_coef: float = 0.5,
         max_grad_norm: float = 0.5,
         max_episode_length: int = 200,
+        norm_advantages: bool = False,
         seed: int = 42,
     ):
         """Initialize A2C agent.
@@ -51,6 +52,7 @@ class A2CAgent(BaseAgent):
         self.entropy_coef = entropy_coef
         self.value_loss_coef = value_loss_coef
         self.max_grad_norm = max_grad_norm
+        self.norm_advantages = norm_advantages
 
         # RNG
         self.rng = jax.random.PRNGKey(seed)
@@ -222,6 +224,9 @@ class A2CAgent(BaseAgent):
 
         td_target = rewards + discount_gamma * next_values * (1.0 - dones)
         advantages = td_target - values
+
+        if actor_state.norm_advantages:
+            advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
 
         def actor_loss_fn(actor_params):
             mean, log_std = actor_state.apply_fn(actor_params, observations)
