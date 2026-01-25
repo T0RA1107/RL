@@ -4,9 +4,10 @@ network_cfg:
   actor: ${network.actor}
   critic: ${network.critic}
 optimizer_cfg: ${optimizer}
-batch_size: 16
+n_env: 16
+batch_size: 128
 discount_gamma: 0.9
-entropy_coef: 0.00
+entropy_coef: 0.001
 value_loss_coef: 1
 max_grad_norm: 0.5
 max_episode_length: 200
