@@ -2,23 +2,19 @@
 import hydra
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Float, Bool
 import rlax
 from flax.training import train_state
-from typing import Dict, Tuple, Any
 from omegaconf import DictConfig
 import pickle
 
 from src.agents.base import BaseAgent
 from src.buffers.replay_buffer import ReplayBuffer
 
-# def tree_l2(a, b):
-#     sq = jax.tree_util.tree_map(lambda x, y: jnp.sum((x - y) ** 2), a, b)
-#     return float(jnp.sqrt(sum(jax.tree_util.tree_leaves(sq))))
-
 
 class TrainState(train_state.TrainState):
     """Extended TrainState for DQN with target network."""
-    target_params: Any = None
+    target_params: dict[str, jnp.ndarray] = None
 
 
 class DQNAgent(BaseAgent):
@@ -125,7 +121,7 @@ class DQNAgent(BaseAgent):
 
         return int(action), None, rng
 
-    def update(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+    def update(self, batch: dict[str, jnp.ndarray]) -> dict[str, float]:
         """Update Q-network using a batch of transitions.
 
         Args:
@@ -142,7 +138,6 @@ class DQNAgent(BaseAgent):
         dones = jnp.array(batch["dones"])
 
         # Update Q-network
-        # old_params = self.state.params
         self.state, loss, q_values = self._update_step(
             self.state,
             observations,
@@ -151,8 +146,6 @@ class DQNAgent(BaseAgent):
             next_observations,
             dones,
         )
-        # print("||Δparams||", tree_l2(self.state.params, old_params))
-        # check if the parameters have changed
 
         self.training_steps += 1
 

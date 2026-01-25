@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 import jax
 import jax.numpy as jnp
-from typing import Any, Dict, Tuple, Union
+from jaxtyping import Array, Float
 
 
 class BaseAgent(ABC):
@@ -31,7 +31,7 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def update(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+    def update(self, batch: dict[str, jnp.ndarray]) -> dict[str, float]:
         """Update agent parameters using a batch of transitions.
 
         Args:

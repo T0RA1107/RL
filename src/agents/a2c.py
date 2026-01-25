@@ -2,10 +2,10 @@
 import hydra
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Float, Bool
 import optax
 import pickle
 from flax.training import train_state
-from typing import Dict, Tuple
 from omegaconf import DictConfig
 
 from src.agents.base import BaseAgent
@@ -152,7 +152,7 @@ class A2CAgent(BaseAgent):
         )
         return jnp.sum(log_prob, axis=-1)
 
-    def update(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+    def update(self, batch: dict[str, jnp.ndarray]) -> dict[str, float]:
         """Update actor and critic using collected rollout.
 
         Args:
@@ -281,7 +281,7 @@ class A2CAgent(BaseAgent):
         with open(path, "wb") as f:
             pickle.dump(checkpoint, f)
 
-    def load(self, path: str):
+    def load(self, path: str) -> None:
         """Load agent parameters.
 
         Args:
