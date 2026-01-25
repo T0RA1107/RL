@@ -9,7 +9,6 @@ import hydra
 from omegaconf import DictConfig
 import jax
 import jax.numpy as jnp
-import numpy as np
 from loguru import logger
 from pyinstrument import Profiler
 
@@ -64,7 +63,7 @@ class RLTrainer:
 
         logger.info("Trainer initialized successfully")
 
-    def run_episode(self, training: bool = True) -> tuple[float, int]:
+    def run_episode(self, n_env: int, training: bool = True) -> tuple[float, int]:
         """Run a single episode (supports both on-policy and off-policy).
 
         Args:
@@ -76,8 +75,8 @@ class RLTrainer:
         # Detect if agent is on-policy (has rollout_buffer) or off-policy (has replay_buffer)
         is_onpolicy = hasattr(self.agent, 'rollout_buffer')
 
-        if is_onpolicy and training:
-            return self._run_episode_onpolicy(training)
+        if is_onpolicy:
+            return self._run_episode_onpolicy(n_env, training)
         else:
             return self._run_episode_offpolicy(training)
 
@@ -130,7 +129,7 @@ class RLTrainer:
         loss_info = {k: v / max(1, episode_length) for k, v in loss_info.items()}
         return episode_reward, episode_length, loss_info
 
-    def _run_episode_onpolicy(self, training: bool = True) -> tuple[float, int]:
+    def _run_episode_onpolicy(self, n_env: int, training: bool = True) -> tuple[float, int]:
         """Run episode for on-policy algorithms.
 
         Args:
@@ -139,23 +138,27 @@ class RLTrainer:
         Returns:
             Tuple of (total_reward, episode_length)
         """
-        # Reset environment
-        self.rng, reset_rng = jax.random.split(self.rng)
-        obs, env_state = self.environment.reset(reset_rng)
-        obs = np.array(obs)
+        vmap_reset = jax.vmap(self.environment.reset)
+        vmap_step = jax.vmap(self.environment.step)
 
-        episode_reward = 0.0
-        episode_length = 0
+        # Reset environment
+        rng = jax.random.split(self.rng, n_env + 1)
+        self.rng, reset_rng = rng[0], rng[1:]
+        obs, env_state = vmap_reset(reset_rng)
+
+        episode_reward = jnp.zeros(n_env)
+        episode_length = jnp.zeros(n_env, dtype=jnp.int32)
         loss_info = {}
-        done = False
+        done = jnp.full(n_env, False)
 
         # Clear rollout buffer
         self.agent.rollout_buffer.reset()
 
-        while not done and episode_length < self.max_steps_per_episode:
+        while not done.any() and (episode_length < self.max_steps_per_episode).any():
             # Select action
-            self.rng, action_rng = jax.random.split(self.rng)
-            normed_action, _, _ = self.agent.select_action(
+            rng = jax.random.split(self.rng, n_env + 1)
+            self.rng, action_rng = rng[0], rng[1:]
+            normed_action = self.agent.select_action(
                 obs, action_rng, training=training
             )
 
@@ -165,32 +168,34 @@ class RLTrainer:
                 normed_action = self.environment.normalize_action(action)
 
             # Step environment
-            self.rng, step_rng = jax.random.split(self.rng)
-            next_obs, env_state, reward, done, env_info = self.environment.step(
+            rng = jax.random.split(self.rng, n_env + 1)
+            self.rng, step_rng = rng[0], rng[1:]
+            next_obs, env_state, reward, done, env_info = vmap_step(
                 env_state, action, step_rng
             )
 
             # Store in rollout buffer
             if training:
                 self.agent.rollout_buffer.add(
-                    obs, normed_action, float(reward), next_obs, bool(done)
+                    obs, normed_action, reward, next_obs, done
                 )
 
             # Update state
             obs = next_obs
             episode_reward += reward
-            episode_length += 1
+            episode_length += 1 - done.astype(jnp.int32)
 
             # Update agent with collected rollout
             if training and len(self.agent.rollout_buffer) >= self.agent.batch_size:
                 # Update
-                batch = self.agent.rollout_buffer.get_batch(self.agent.batch_size)
+                batch = self.agent.rollout_buffer.get_batch(self.agent.batch_size // n_env)
 
                 results = self.agent.update(batch)
                 for k, v in results.items():
                     loss_info[k] = loss_info.get(k, 0.0) + v
 
-        loss_info = {k: v / max(1, episode_length) for k, v in loss_info.items()}
+        # TODO: fix episode length averaging
+        loss_info = {k: v / episode_length.mean() for k, v in loss_info.items()}
         return episode_reward, episode_length, loss_info
 
     def evaluate(self) -> dict:
@@ -200,18 +205,15 @@ class RLTrainer:
             Dictionary of evaluation metrics
         """
         logger.info("Running evaluation...")
-        eval_rewards = []
-        eval_lengths = []
 
-        for _ in range(self.eval_episodes):
-            reward, length, _ = self.run_episode(training=False)
-            eval_rewards.append(reward)
-            eval_lengths.append(length)
+        eval_rewards, eval_lengths, _ = self.run_episode(
+            n_env=self.eval_episodes, training=False
+        )
 
         metrics = {
-            "eval/mean_reward": float(jnp.mean(jnp.array(eval_rewards))),
-            "eval/std_reward": float(jnp.std(jnp.array(eval_rewards))),
-            "eval/mean_length": float(jnp.mean(jnp.array(eval_lengths))),
+            "eval/mean_reward": eval_rewards.mean(),
+            "eval/std_reward": eval_rewards.std(),
+            "eval/mean_length": eval_lengths.mean(),
         }
 
         logger.info(
@@ -238,20 +240,21 @@ class RLTrainer:
 
         for episode in range(1, self.num_episodes + 1):
             # Run training episode
-            episode_reward, episode_length, loss_info = self.run_episode(training=True)
+            episode_reward, episode_length, loss_info = self.run_episode(
+                n_env=self.agent.n_env, training=True)
 
             # Decay epsilon
             self.agent.decay_epsilon()
 
             # Track metrics
-            self.episode_rewards.append(episode_reward)
-            self.episode_lengths.append(episode_length)
+            self.episode_rewards.append(episode_reward.mean())
+            self.episode_lengths.append(episode_length.mean())
 
             # Log training metrics
             train_metrics = {
                 "episode": episode,
-                "train/episode_reward": episode_reward,
-                "train/episode_length": episode_length,
+                "train/episode_reward": episode_reward.mean(),
+                "train/episode_length": episode_length.mean(),
             }
 
             # Add agent-specific metrics (DQN has epsilon and buffer)
@@ -268,7 +271,7 @@ class RLTrainer:
                 mean_reward = float(jnp.mean(jnp.array(self.episode_rewards[-10:])))
                 log_str = (
                     f"Episode {episode}/{self.num_episodes} | "
-                    f"Reward: {episode_reward:.2f} | "
+                    f"Reward: {episode_reward.mean():.2f} | "
                     f"Mean(10): {mean_reward:.2f} | "
                     f"Loss: {loss_info['loss/total']:.4f}"
                 )

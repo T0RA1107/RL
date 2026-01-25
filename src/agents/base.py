@@ -11,10 +11,10 @@ class BaseAgent(ABC):
     @abstractmethod
     def select_action(
         self,
-        observation: jnp.ndarray,
+        observation: Float[Array, "n_env ..."],
         rng: jax.random.PRNGKey,
         training: bool = True
-    ) -> Tuple[Union[int, jnp.ndarray], Union[Dict[str, Any], None], jax.random.PRNGKey]:
+    ) -> Float[Array, "n_env action_dim"]:
         """Select an action given an observation.
 
         Args:

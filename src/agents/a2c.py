@@ -10,6 +10,7 @@ from omegaconf import DictConfig
 
 from src.agents.base import BaseAgent
 from src.buffers.rollout_buffer import RolloutBuffer
+from src.estimators.multistep import generalized_advantage_estimation
 
 
 class A2CAgent(BaseAgent):
@@ -21,6 +22,7 @@ class A2CAgent(BaseAgent):
         action_dim: int,
         network_cfg: DictConfig,
         optimizer_cfg: DictConfig,
+        n_env: int = 8,
         batch_size: int = 64,
         discount_gamma: float = 0.99,
         entropy_coef: float = 0.01,
@@ -47,6 +49,7 @@ class A2CAgent(BaseAgent):
         """
         self.observation_dim = observation_dim
         self.action_dim = action_dim
+        self.n_env = n_env
         self.batch_size = batch_size
         self.discount_gamma = discount_gamma
         self.entropy_coef = entropy_coef
@@ -59,7 +62,7 @@ class A2CAgent(BaseAgent):
 
         # Rollout buffer
         self.rollout_buffer = RolloutBuffer(
-            max_episode_length, observation_dim, action_dim
+            n_env, max_episode_length, observation_dim, action_dim
         )
 
         # Networks
@@ -104,10 +107,10 @@ class A2CAgent(BaseAgent):
 
     def select_action(
         self,
-        observation: jnp.ndarray,
+        observation: Float[Array, "n_env ..."],
         rng: jax.random.PRNGKey,
         training: bool = True
-    ) -> Tuple[jnp.ndarray, None, jax.random.PRNGKey]:
+    ) -> Float[Array, "n_env action_dim"]:
         """Select action from Gaussian policy.
 
         Args:
@@ -118,22 +121,35 @@ class A2CAgent(BaseAgent):
         Returns:
             Tuple of (action, None, updated_rng)
         """
-        rng, sample_rng = jax.random.split(rng)
-
-        obs_batch = observation[None, ...]
-
-        # Get policy distribution
-        mean, log_std = self.actor_state.apply_fn(self.actor_state.params, obs_batch)
-        std = jnp.exp(log_std)
-
-        # Sample action
-        z = jax.random.normal(sample_rng, mean.shape)
-        action = mean + std * z
-
-        return action[0], None, rng
+        return self._calc_action(
+            self.actor_state,
+            observation,
+            jax.vmap(lambda k: jax.random.normal(k, self.action_dim))(rng),
+            jnp.array(float(training))
+        )
 
     @staticmethod
-    def _gaussian_log_prob(action, mean, log_std):
+    @jax.jit
+    def _calc_action(
+        actor_state: train_state.TrainState,
+        observation: Float[Array, "n_env ..."],
+        z: Float[Array, "n_env action_dim"],
+        training: Float[Array, ""]
+    ):
+        mean, log_std = actor_state.apply_fn(actor_state.params, observation)
+
+        std = jnp.exp(log_std)
+        action = mean + std * z * training
+        action = jnp.tanh(action)
+        return action
+
+
+    @staticmethod
+    def _gaussian_log_prob(
+        action: Float[Array, "... action_dim"],
+        mean: Float[Array, "... action_dim"],
+        log_std: Float[Array, "... action_dim"]
+    ) -> Float[Array, "..."]:
         """Compute log probability of action under Gaussian.
 
         Args:
@@ -161,11 +177,11 @@ class A2CAgent(BaseAgent):
         Returns:
             Dictionary of training metrics
         """
-        observations = jnp.array(batch["observations"])
-        actions = jnp.array(batch["actions"])
-        rewards = jnp.array(batch["rewards"])
-        next_observations = jnp.array(batch["next_observations"])
-        dones = jnp.array(batch["dones"])
+        observations = batch["observations"]
+        actions = batch["actions"]
+        rewards = batch["rewards"]
+        next_observations = batch["next_observations"]
+        dones = batch["dones"]
 
         # Update
         self.actor_state, self.critic_state, losses = self._update_step(
@@ -191,16 +207,18 @@ class A2CAgent(BaseAgent):
     @staticmethod
     @jax.jit
     def _update_step(
-        actor_state,
-        critic_state,
-        observations,
-        actions,
-        rewards,
-        next_observations,
-        dones,
-        discount_gamma,
-        entropy_coef,
-        value_loss_coef):
+        actor_state: train_state.TrainState,
+        critic_state: train_state.TrainState,
+        observations: Float[Array, "n_env T ..."],
+        actions: Float[Array, "n_env T action_dim"],
+        rewards: Float[Array, "n_env T"],
+        next_observations: Float[Array, "n_env T ..."],
+        dones: Bool[Array, "n_env T"],
+        discount_gamma: float,
+        entropy_coef: float,
+        value_loss_coef: float,
+        norm_advantages: bool = False,
+    ):
         """JIT-compiled update step.
 
         Args:
@@ -213,8 +231,8 @@ class A2CAgent(BaseAgent):
             dones: Batch of done flags
             discount_gamma: Discount factor
             entropy_coef: Entropy coefficient
-            value_loss_coef: Value loss coefficient
-
+            value_loss_coef: Value loss coefficient,
+            norm_advantages: bool = False,
         Returns:
             Tuple of (updated_actor_state, updated_critic_state, losses)
         """
@@ -222,10 +240,21 @@ class A2CAgent(BaseAgent):
         values = critic_state.apply_fn(critic_state.params, observations).squeeze()
         next_values = critic_state.apply_fn(critic_state.params, next_observations).squeeze()
 
-        td_target = rewards + discount_gamma * next_values * (1.0 - dones)
-        advantages = td_target - values
+        advantages = generalized_advantage_estimation(
+            rewards=rewards,
+            values=values,
+            next_values=next_values,
+            dones=dones,
+            discount_gamma=discount_gamma,
+            lambda_=0.95,
+        ).reshape(-1)
+        td_target = advantages + values.reshape(-1)
 
-        if actor_state.norm_advantages:
+        observations = observations.reshape(-1, observations.shape[-1])
+        actions = actions.reshape(-1, actions.shape[-1])
+        dones = dones.reshape(-1)
+
+        if norm_advantages:
             advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
 
         def actor_loss_fn(actor_params):
