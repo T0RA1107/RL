@@ -1,37 +1,54 @@
 """Experience replay buffer for off-policy RL algorithms."""
-import numpy as np
-from typing import Tuple, Dict
+import jax.numpy as jnp
+from jaxtyping import Array, Float, Bool
+
+from .base import BaseBuffer
 
 
-class ReplayBuffer:
+class ReplayBuffer(BaseBuffer):
     """Simple experience replay buffer for storing and sampling transitions."""
 
-    def __init__(self, buffer_size: int, observation_dim: int):
+    def __init__(
+        self,
+        n_env: int,
+        buffer_size: int,
+        observation_dim: int,
+        action_dim: int,
+    ):
         """Initialize replay buffer.
 
         Args:
+            n_env: Number of parallel environments
             buffer_size: Maximum number of transitions to store
-            observation_dim: Dimension of observation space
+            observation_dim: Observation dimension
+            action_dim: Action dimension
         """
+        self.n_env = n_env
         self.buffer_size = buffer_size
         self.observation_dim = observation_dim
+        self.action_dim = action_dim
+
+        # Preallocate arrays for efficiency
+        self.observations = jnp.zeros((n_env, buffer_size, observation_dim))
+        self.actions = jnp.zeros((n_env, buffer_size, action_dim))
+        self.rewards = jnp.zeros((n_env, buffer_size))
+        self.next_observations = jnp.zeros((n_env, buffer_size, observation_dim))
+        self.dones = jnp.zeros((n_env, buffer_size))
+
         self.position = 0
         self.size = 0
 
-        # Preallocate arrays for efficiency
-        self.observations = np.zeros((buffer_size, observation_dim), dtype=np.float32)
-        self.actions = np.zeros(buffer_size, dtype=np.int32)
-        self.rewards = np.zeros(buffer_size, dtype=np.float32)
-        self.next_observations = np.zeros((buffer_size, observation_dim), dtype=np.float32)
-        self.dones = np.zeros(buffer_size, dtype=np.float32)
+    def __len__(self) -> int:
+        """Return current size of buffer."""
+        return self.size
 
     def add(
         self,
-        observation: np.ndarray,
-        action: int,
-        reward: float,
-        next_observation: np.ndarray,
-        done: bool
+        observation: Float[Array, "n_env ..."],
+        action: Float[Array, "n_env action_dim"],
+        reward: Float[Array, " n_env"],
+        next_observation: Float[Array, "n_env ..."],
+        done: Bool[Array, " n_env"],
     ) -> None:
         """Add a transition to the buffer.
 
@@ -42,16 +59,16 @@ class ReplayBuffer:
             next_observation: Next observation
             done: Whether episode ended
         """
-        self.observations[self.position] = observation
-        self.actions[self.position] = action
-        self.rewards[self.position] = reward
-        self.next_observations[self.position] = next_observation
-        self.dones[self.position] = float(done)
+        self.observations = self.observations.at[:, self.position].set(observation)
+        self.actions = self.actions.at[:, self.position].set(action)
+        self.rewards = self.rewards.at[:, self.position].set(reward)
+        self.next_observations = self.next_observations.at[:, self.position].set(next_observation)
+        self.dones = self.dones.at[:, self.position].set(done)
 
         self.position = (self.position + 1) % self.buffer_size
         self.size = min(self.size + 1, self.buffer_size)
 
-    def sample(self, batch_size: int) -> Dict[str, np.ndarray]:
+    def get_batch(self, batch_size: int) -> dict[str, jnp.ndarray]:
         """Sample a batch of transitions.
 
         Args:
@@ -60,19 +77,15 @@ class ReplayBuffer:
         Returns:
             Dictionary containing batch of transitions
         """
-        indices = np.random.randint(0, self.size, size=batch_size)
+        indices = jnp.random.randint(0, self.size, size=batch_size)
 
         return {
-            "observations": self.observations[indices],
-            "actions": self.actions[indices],
-            "rewards": self.rewards[indices],
-            "next_observations": self.next_observations[indices],
-            "dones": self.dones[indices],
+            "observations": self.observations[:, indices],
+            "actions": self.actions[:, indices],
+            "rewards": self.rewards[:, indices],
+            "next_observations": self.next_observations[:, indices],
+            "dones": self.dones[:, indices],
         }
-
-    def __len__(self) -> int:
-        """Return current size of buffer."""
-        return self.size
 
     def is_ready(self, min_size: int) -> bool:
         """Check if buffer has enough samples.

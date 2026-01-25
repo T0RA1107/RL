@@ -94,10 +94,10 @@ class DQNAgent(BaseAgent):
 
     def select_action(
         self,
-        observation: jnp.ndarray,
+        observation: Float[Array, "n_env ..."],
         rng: jax.random.PRNGKey,
         training: bool = True
-    ):
+    ) -> Float[Array, "n_env action_dim"]:
         """Select action using epsilon-greedy policy.
 
         Args:
@@ -163,12 +163,12 @@ class DQNAgent(BaseAgent):
     @jax.jit
     def _update_step(
         state: TrainState,
-        observations: jnp.ndarray,
-        actions: jnp.ndarray,
-        rewards: jnp.ndarray,
-        next_observations: jnp.ndarray,
-        dones: jnp.ndarray,
-    ) -> Tuple[TrainState, jnp.ndarray, jnp.ndarray]:
+        observations: Float[Array, "n_env T ..."],
+        actions: Float[Array, "n_env T action_dim"],
+        rewards: Float[Array, "n_env T"],
+        next_observations: Float[Array, "n_env T ..."],
+        dones: Bool[Array, "n_env T"],
+    ) -> tuple[TrainState, Float[Array, ""], Float[Array, "n_env T"]]:
         """JIT-compiled training step.
 
         Args:
