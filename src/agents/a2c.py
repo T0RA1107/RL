@@ -22,13 +22,14 @@ class A2CAgent(BaseAgent):
         action_dim: int,
         network_cfg: DictConfig,
         optimizer_cfg: DictConfig,
-        n_env: int = 8,
-        batch_size: int = 64,
         discount_gamma: float = 0.99,
         entropy_coef: float = 0.01,
         value_loss_coef: float = 0.5,
         max_grad_norm: float = 0.5,
+        n_env: int = 8,
+        batch_size: int = 64,
         max_episode_length: int = 200,
+        learning_starts: int = 64,
         norm_advantages: bool = False,
         seed: int = 42,
     ):
@@ -37,14 +38,16 @@ class A2CAgent(BaseAgent):
         Args:
             observation_dim: Observation space dimension
             action_dim: Action space dimension
-            network_config: Network configuration
-            optimizer_config: Optimizer configuration
+            network_cfg: Network configuration
+            optimizer_cfg: Optimizer configuration
             batch_size: Batch size for updates
             discount_gamma: Discount factor
             entropy_coef: Entropy regularization coefficient
             value_loss_coef: Value loss coefficient
             max_grad_norm: Maximum gradient norm for clipping
             max_episode_length: Maximum episode length
+            learning_starts: Number of steps before learning starts
+            norm_advantages: Whether to normalize advantages
             seed: Random seed
         """
         self.observation_dim = observation_dim
@@ -56,12 +59,12 @@ class A2CAgent(BaseAgent):
         self.value_loss_coef = value_loss_coef
         self.max_grad_norm = max_grad_norm
         self.norm_advantages = norm_advantages
-
+        self.learning_starts = learning_starts
         # RNG
         self.rng = jax.random.PRNGKey(seed)
 
         # Rollout buffer
-        self.rollout_buffer = RolloutBuffer(
+        self.buffer = RolloutBuffer(
             n_env, max_episode_length, observation_dim, action_dim
         )
 
@@ -143,7 +146,6 @@ class A2CAgent(BaseAgent):
         action = jnp.tanh(action)
         return action
 
-
     @staticmethod
     def _gaussian_log_prob(
         action: Float[Array, "... action_dim"],
@@ -195,6 +197,7 @@ class A2CAgent(BaseAgent):
             self.discount_gamma,
             self.entropy_coef,
             self.value_loss_coef,
+            self.norm_advantages,
         )
 
         return {
@@ -293,9 +296,8 @@ class A2CAgent(BaseAgent):
 
         return actor_state, critic_state, losses
 
-    def decay_epsilon(self):
-        """Placeholder for compatibility with BaseAgent."""
-        pass
+    def check_action_type(self, action_type: str) -> None:
+        assert action_type == "continuous", "A2CAgent only supports continuous action spaces."
 
     def save(self, path: str):
         """Save agent parameters.

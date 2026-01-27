@@ -75,69 +75,6 @@ class RLTrainer:
         # Detect if agent is on-policy (has rollout_buffer) or off-policy (has replay_buffer)
         is_onpolicy = hasattr(self.agent, 'rollout_buffer')
 
-        if is_onpolicy:
-            return self._run_episode_onpolicy(n_env, training)
-        else:
-            return self._run_episode_offpolicy(training)
-
-    def _run_episode_offpolicy(self, training: bool = True) -> tuple[float, int]:
-        """Run episode for off-policy algorithms.
-
-        Args:
-            training: Whether in training mode
-
-        Returns:
-            Tuple of (total_reward, episode_length)
-        """
-        # Reset environment
-        self.rng, reset_rng = jax.random.split(self.rng)
-        obs, env_state = self.environment.reset(reset_rng)
-
-        episode_reward = 0.0
-        episode_length = 0
-        done = False
-        loss_info = {}
-
-        while not done and episode_length < self.max_steps_per_episode:
-            # Select action
-            self.rng, action_rng = jax.random.split(self.rng)
-            action, _, _ = self.agent.select_action(
-                obs, action_rng, training=training
-            )
-            # Step environment
-            self.rng, step_rng = jax.random.split(self.rng)
-            next_obs, env_state, reward, done, info = self.environment.step(
-                env_state, action, step_rng
-            )
-
-            # Store transition in replay buffer (only during training)
-            if training:
-                self.agent.buffer.add(obs, action, float(reward), next_obs, bool(done))
-
-            # Update agent (only during training and after learning_starts)
-            if training and len(self.agent.buffer) >= self.agent.learning_starts:
-                batch = self.agent.buffer.sample(self.agent.batch_size)
-                results = self.agent.update(batch)
-                for k, v in results.items():
-                    loss_info[k] = loss_info.get(k, 0.0) + v
-
-            # Update state
-            obs = next_obs
-            episode_reward += float(reward)
-            episode_length += 1
-
-        loss_info = {k: v / max(1, episode_length) for k, v in loss_info.items()}
-        return episode_reward, episode_length, loss_info
-
-    def _run_episode_onpolicy(self, n_env: int, training: bool = True) -> tuple[float, int]:
-        """Run episode for on-policy algorithms.
-
-        Args:
-            training: Whether in training mode
-
-        Returns:
-            Tuple of (total_reward, episode_length)
-        """
         vmap_reset = jax.vmap(self.environment.reset)
         vmap_step = jax.vmap(self.environment.step)
 
@@ -152,7 +89,8 @@ class RLTrainer:
         done = jnp.full(n_env, False)
 
         # Clear rollout buffer
-        self.agent.rollout_buffer.reset()
+        if training and is_onpolicy:
+            self.agent.buffer.reset()
 
         while not done.any() and (episode_length < self.max_steps_per_episode).any():
             # Select action
@@ -166,6 +104,8 @@ class RLTrainer:
             if self.environment.is_continuous_action:
                 action = self.environment.scale_action(normed_action)
                 normed_action = self.environment.normalize_action(action)
+            else:
+                action = normed_action
 
             # Step environment
             rng = jax.random.split(self.rng, n_env + 1)
@@ -174,22 +114,21 @@ class RLTrainer:
                 env_state, action, step_rng
             )
 
-            # Store in rollout buffer
+            # Store in  buffer
             if training:
-                self.agent.rollout_buffer.add(
+                self.agent.buffer.add(
                     obs, normed_action, reward, next_obs, done
                 )
 
             # Update state
             obs = next_obs
             episode_reward += reward
-            episode_length += 1 - done.astype(jnp.int32)
+            episode_length += 1
 
             # Update agent with collected rollout
-            if training and len(self.agent.rollout_buffer) >= self.agent.batch_size:
+            if training and len(self.agent.buffer) >= self.agent.learning_starts:
                 # Update
-                batch = self.agent.rollout_buffer.get_batch(self.agent.batch_size // n_env)
-
+                batch = self.agent.buffer.get_batch(self.agent.batch_size // n_env)
                 results = self.agent.update(batch)
                 for k, v in results.items():
                     loss_info[k] = loss_info.get(k, 0.0) + v
@@ -273,8 +212,9 @@ class RLTrainer:
                     f"Episode {episode}/{self.num_episodes} | "
                     f"Reward: {episode_reward.mean():.2f} | "
                     f"Mean(10): {mean_reward:.2f} | "
-                    f"Loss: {loss_info['loss/total']:.4f}"
                 )
+                if "loss/total" in loss_info:
+                    log_str += f"Loss: {loss_info['loss/total']:.4f} | "
                 if hasattr(self.agent, 'epsilon'):
                     log_str += f" | Epsilon: {self.agent.epsilon:.3f}"
                 if hasattr(self.agent, 'buffer'):

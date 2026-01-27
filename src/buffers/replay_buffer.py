@@ -1,6 +1,9 @@
 """Experience replay buffer for off-policy RL algorithms."""
+from typing import Union
+
+import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Bool
+from jaxtyping import Array, Float, Int, Bool
 
 from .base import BaseBuffer
 
@@ -14,6 +17,8 @@ class ReplayBuffer(BaseBuffer):
         buffer_size: int,
         observation_dim: int,
         action_dim: int,
+        rng: jax.random.PRNGKey,
+        action_type: str = "discrete",
     ):
         """Initialize replay buffer.
 
@@ -27,10 +32,18 @@ class ReplayBuffer(BaseBuffer):
         self.buffer_size = buffer_size
         self.observation_dim = observation_dim
         self.action_dim = action_dim
+        self.rng = rng
+        self.action_type = action_type
 
         # Preallocate arrays for efficiency
         self.observations = jnp.zeros((n_env, buffer_size, observation_dim))
-        self.actions = jnp.zeros((n_env, buffer_size, action_dim))
+        if action_type == "discrete":
+            self.actions = jnp.zeros((n_env, buffer_size), dtype=jnp.int32)
+        else:
+            self.actions = jnp.zeros(
+                (n_env, buffer_size, action_dim),
+                dtype=jnp.float32
+            )
         self.rewards = jnp.zeros((n_env, buffer_size))
         self.next_observations = jnp.zeros((n_env, buffer_size, observation_dim))
         self.dones = jnp.zeros((n_env, buffer_size))
@@ -45,7 +58,7 @@ class ReplayBuffer(BaseBuffer):
     def add(
         self,
         observation: Float[Array, "n_env ..."],
-        action: Float[Array, "n_env action_dim"],
+        action: Union[Float[Array, "n_env action_dim"], Int[Array, " n_env"]],
         reward: Float[Array, " n_env"],
         next_observation: Float[Array, "n_env ..."],
         done: Bool[Array, " n_env"],
@@ -68,6 +81,10 @@ class ReplayBuffer(BaseBuffer):
         self.position = (self.position + 1) % self.buffer_size
         self.size = min(self.size + 1, self.buffer_size)
 
+    @staticmethod
+    def get_range(buffer_size: int, start: Int[Array, " n_env"], size: int) -> Int[Array, ""]:
+        return start + jnp.arange(size) % buffer_size
+
     def get_batch(self, batch_size: int) -> dict[str, jnp.ndarray]:
         """Sample a batch of transitions.
 
@@ -77,7 +94,15 @@ class ReplayBuffer(BaseBuffer):
         Returns:
             Dictionary containing batch of transitions
         """
-        indices = jnp.random.randint(0, self.size, size=batch_size)
+        self.rng, sample_rng = jax.random.split(self.rng)
+        maxval = self.size - batch_size if self.size < self.buffer_size else self.buffer_size
+        indices = jax.random.randint(
+            sample_rng,
+            shape=(batch_size,),
+            minval=0,
+            maxval=maxval,
+        )
+        indices = self.get_range(self.buffer_size, indices, batch_size)
 
         return {
             "observations": self.observations[:, indices],

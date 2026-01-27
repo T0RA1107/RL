@@ -48,6 +48,15 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
+    def check_action_type(self, action_type: str) -> None:
+        """Check if the action type is compatible with the agent.
+
+        Args:
+            action_type: Type of action space (e.g., 'discrete', 'continuous')
+        """
+        pass
+
+    @abstractmethod
     def save(self, path: str) -> None:
         """Save agent parameters to file.
 
