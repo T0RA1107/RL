@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 import jax
 import jax.numpy as jnp
-from typing import Any, Dict, Tuple, Union
+from jaxtyping import Array, Float
 
 
 class BaseAgent(ABC):
@@ -11,10 +11,10 @@ class BaseAgent(ABC):
     @abstractmethod
     def select_action(
         self,
-        observation: jnp.ndarray,
+        observation: Float[Array, "n_env ..."],
         rng: jax.random.PRNGKey,
         training: bool = True
-    ) -> Tuple[Union[int, jnp.ndarray], Union[Dict[str, Any], None], jax.random.PRNGKey]:
+    ) -> Float[Array, "n_env action_dim"]:
         """Select an action given an observation.
 
         Args:
@@ -31,7 +31,7 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def update(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+    def update(self, batch: dict[str, jnp.ndarray]) -> dict[str, float]:
         """Update agent parameters using a batch of transitions.
 
         Args:
@@ -44,6 +44,26 @@ class BaseAgent(ABC):
 
         Returns:
             Dictionary of metrics (e.g., loss, q_values)
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def check_action_type(self, action_type: str) -> None:
+        """Check if the action type is compatible with the agent.
+
+        Args:
+            action_type: Type of action space (e.g., 'discrete', 'continuous')
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def isonpolicy(self) -> bool:
+        """Return whether the agent is on-policy.
+
+        Returns:
+            True if on-policy, False if off-policy
         """
         pass
 

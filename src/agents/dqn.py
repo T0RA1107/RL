@@ -2,23 +2,19 @@
 import hydra
 import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Float, Int, Bool
 import rlax
 from flax.training import train_state
-from typing import Dict, Tuple, Any
 from omegaconf import DictConfig
 import pickle
 
 from src.agents.base import BaseAgent
 from src.buffers.replay_buffer import ReplayBuffer
 
-# def tree_l2(a, b):
-#     sq = jax.tree_util.tree_map(lambda x, y: jnp.sum((x - y) ** 2), a, b)
-#     return float(jnp.sqrt(sum(jax.tree_util.tree_leaves(sq))))
-
 
 class TrainState(train_state.TrainState):
     """Extended TrainState for DQN with target network."""
-    target_params: Any = None
+    target_params: dict[str, jnp.ndarray] = None
 
 
 class DQNAgent(BaseAgent):
@@ -34,6 +30,7 @@ class DQNAgent(BaseAgent):
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.01,
         epsilon_decay: float = 0.995,
+        n_env: int = 8,
         batch_size: int = 64,
         buffer_size: int = 10000,
         learning_starts: int = 1000,
@@ -64,6 +61,7 @@ class DQNAgent(BaseAgent):
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
+        self.n_env = n_env
         self.batch_size = batch_size
         self.learning_starts = learning_starts
         self.target_update_frequency = target_update_frequency
@@ -72,7 +70,10 @@ class DQNAgent(BaseAgent):
         self.rng = jax.random.PRNGKey(seed)
 
         # Create replay buffer
-        self.buffer = ReplayBuffer(buffer_size, observation_dim)
+        self.rng, buffer_rng = jax.random.split(self.rng)
+        self.buffer = ReplayBuffer(
+            n_env, buffer_size, observation_dim, 1, buffer_rng
+        )
 
         # Initialize networks
         self.rng, network_rng = jax.random.split(self.rng)
@@ -98,10 +99,10 @@ class DQNAgent(BaseAgent):
 
     def select_action(
         self,
-        observation: jnp.ndarray,
+        observation: Float[Array, "n_env ..."],
         rng: jax.random.PRNGKey,
         training: bool = True
-    ):
+    ) -> Float[Array, "n_env action_dim"]:
         """Select action using epsilon-greedy policy.
 
         Args:
@@ -112,20 +113,32 @@ class DQNAgent(BaseAgent):
         Returns:
             Tuple of (action, info_dict, updated_rng)
         """
-        rng, epsilon_rng, action_rng = jax.random.split(rng, 3)
+        rng = jax.vmap(lambda k: jax.random.split(k, 2))(rng)
+        epsilon_rng, action_rng = rng[:, 0], rng[:, 1]
+        return self._calc_action(
+            self.state,
+            observation,
+            jax.vmap(lambda k: jax.random.uniform(k) < self.epsilon)(epsilon_rng),
+            jax.vmap(lambda k: jax.random.randint(k, (), 0, self.action_dim))(action_rng),
+            training
+        )
 
-        if training and jax.random.uniform(epsilon_rng) < self.epsilon:
-            # Random action (exploration)
-            action = jax.random.randint(action_rng, (), 0, self.action_dim)
-        else:
-            # Greedy action (exploitation)
-            obs_batch = observation[None, ...]  # Add batch dimension
-            q_values = self.state.apply_fn(self.state.params, obs_batch)
-            action = jnp.argmax(q_values[0])
+    @staticmethod
+    @jax.jit
+    def _calc_action(
+        state: train_state.TrainState,
+        observation: Float[Array, "n_env ..."],
+        explore: Bool[Array, " n_env"],
+        random_action: Float[Array, "n_env action_dim"],
+        training: Bool[Array, ""]
+    ):
+        q_values = state.apply_fn(state.params, observation)
+        greedy_action = jnp.argmax(q_values, axis=-1)
+        action = jnp.where(explore & training, random_action, greedy_action)
 
-        return int(action), None, rng
+        return action
 
-    def update(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, float]:
+    def update(self, batch: dict[str, jnp.ndarray]) -> dict[str, float]:
         """Update Q-network using a batch of transitions.
 
         Args:
@@ -135,14 +148,13 @@ class DQNAgent(BaseAgent):
             Dictionary of training metrics
         """
         # Convert numpy arrays to JAX arrays
-        observations = jnp.array(batch["observations"])
-        actions = jnp.array(batch["actions"])
-        rewards = jnp.array(batch["rewards"])
-        next_observations = jnp.array(batch["next_observations"])
-        dones = jnp.array(batch["dones"])
+        observations = batch["observations"]
+        actions = batch["actions"]
+        rewards = batch["rewards"]
+        next_observations = batch["next_observations"]
+        dones = batch["dones"]
 
         # Update Q-network
-        # old_params = self.state.params
         self.state, loss, q_values = self._update_step(
             self.state,
             observations,
@@ -151,8 +163,6 @@ class DQNAgent(BaseAgent):
             next_observations,
             dones,
         )
-        # print("||Δparams||", tree_l2(self.state.params, old_params))
-        # check if the parameters have changed
 
         self.training_steps += 1
 
@@ -170,12 +180,12 @@ class DQNAgent(BaseAgent):
     @jax.jit
     def _update_step(
         state: TrainState,
-        observations: jnp.ndarray,
-        actions: jnp.ndarray,
-        rewards: jnp.ndarray,
-        next_observations: jnp.ndarray,
-        dones: jnp.ndarray,
-    ) -> Tuple[TrainState, jnp.ndarray, jnp.ndarray]:
+        observations: Float[Array, "n_env T ..."],
+        actions: Int[Array, "n_env T"],
+        rewards: Float[Array, "n_env T"],
+        next_observations: Float[Array, "n_env T ..."],
+        dones: Bool[Array, "n_env T"],
+    ) -> tuple[TrainState, Float[Array, ""], Float[Array, "n_env T"]]:
         """JIT-compiled training step.
 
         Args:
@@ -189,6 +199,12 @@ class DQNAgent(BaseAgent):
         Returns:
             Tuple of (updated_state, loss, q_values)
         """
+        observations = observations.reshape(-1, observations.shape[-1])
+        actions = actions.reshape(-1)
+        rewards = rewards.reshape(-1)
+        next_observations = next_observations.reshape(-1, next_observations.shape[-1])
+        dones = dones.reshape(-1)
+
         def loss_fn(params):
             # Compute Q-values for current observations
             q_values = state.apply_fn(params, observations)
@@ -218,6 +234,18 @@ class DQNAgent(BaseAgent):
         state = state.apply_gradients(grads=grads)
 
         return state, loss, q_values
+
+    def check_action_type(self, action_type: str) -> None:
+        assert action_type == "discrete", "DQNAgent only supports discrete action spaces."
+
+    @property
+    def isonpolicy(self) -> bool:
+        """Return whether the agent is on-policy.
+
+        Returns:
+            True if on-policy, False if off-policy
+        """
+        return False
 
     def decay_epsilon(self) -> None:
         """Decay exploration rate."""
