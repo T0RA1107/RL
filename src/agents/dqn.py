@@ -238,6 +238,15 @@ class DQNAgent(BaseAgent):
     def check_action_type(self, action_type: str) -> None:
         assert action_type == "discrete", "DQNAgent only supports discrete action spaces."
 
+    @property
+    def isonpolicy(self) -> bool:
+        """Return whether the agent is on-policy.
+
+        Returns:
+            True if on-policy, False if off-policy
+        """
+        return False
+
     def decay_epsilon(self) -> None:
         """Decay exploration rate."""
         self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)

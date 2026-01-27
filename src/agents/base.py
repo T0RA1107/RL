@@ -47,12 +47,23 @@ class BaseAgent(ABC):
         """
         pass
 
+    @property
     @abstractmethod
     def check_action_type(self, action_type: str) -> None:
         """Check if the action type is compatible with the agent.
 
         Args:
             action_type: Type of action space (e.g., 'discrete', 'continuous')
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def isonpolicy(self) -> bool:
+        """Return whether the agent is on-policy.
+
+        Returns:
+            True if on-policy, False if off-policy
         """
         pass
 

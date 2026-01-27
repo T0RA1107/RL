@@ -257,8 +257,12 @@ class A2CAgent(BaseAgent):
         actions = actions.reshape(-1, actions.shape[-1])
         dones = dones.reshape(-1)
 
-        if norm_advantages:
-            advantages = (advantages - jnp.mean(advantages)) / (jnp.std(advantages) + 1e-8)
+        advantages = jax.lax.cond(
+            norm_advantages,
+            lambda x: (x - jnp.mean(x)) / (jnp.std(x) + 1e-8),
+            lambda x: x,
+            advantages
+        )
 
         def actor_loss_fn(actor_params):
             mean, log_std = actor_state.apply_fn(actor_params, observations)
@@ -298,6 +302,19 @@ class A2CAgent(BaseAgent):
 
     def check_action_type(self, action_type: str) -> None:
         assert action_type == "continuous", "A2CAgent only supports continuous action spaces."
+
+    @property
+    def isonpolicy(self) -> bool:
+        """Return whether the agent is on-policy.
+
+        Returns:
+            True if on-policy, False if off-policy
+        """
+        return True
+
+    def decay_epsilon(self) -> None:
+        """A2C does not use epsilon decay."""
+        pass
 
     def save(self, path: str):
         """Save agent parameters.

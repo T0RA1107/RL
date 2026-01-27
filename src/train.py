@@ -73,7 +73,7 @@ class RLTrainer:
             Tuple of (total_reward, episode_length)
         """
         # Detect if agent is on-policy (has rollout_buffer) or off-policy (has replay_buffer)
-        is_onpolicy = hasattr(self.agent, 'rollout_buffer')
+        is_onpolicy = self.agent.isonpolicy
 
         vmap_reset = jax.vmap(self.environment.reset)
         vmap_step = jax.vmap(self.environment.step)
