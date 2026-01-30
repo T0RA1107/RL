@@ -4,4 +4,5 @@ uv run ./src/train.py \
   network=mlp \
   optimizer=adam \
   training.num_episodes=500 \
-  wandb.enabled=false
+  wandb.enabled=false \
+  rendering.enabled=true

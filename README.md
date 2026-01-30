@@ -112,6 +112,20 @@ logs/
 ### Estimators
 - **GAE**: Generalized Advantage Estimation for policy gradients
 
+## Visualization
+
+To visualize Gymnax environments, you need to copy the files from `misc/visualize/` to the `gymnax/visualize/` directory in your gymnax library installation.
+
+```bash
+# Find the gymnax library installation path
+python -c "import gymnax; print(gymnax.__path__[0])"
+
+# Copy misc/visualize contents to gymnax/visualize
+cp misc/visualize/* <gymnax_path>/visualize/
+```
+
+This enables gym environment rendering through gymnax's visualization functionality.
+
 ## Roadmap
 
 Future improvements:

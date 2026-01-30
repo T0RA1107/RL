@@ -18,4 +18,5 @@ dependencies = [
     "jaxlib>=0.8.2",
     "pyinstrument>=5.1.2",
     "jaxtyping>=0.3.5",
+    "gymnasium[classic-control]>=1.2.3",
 ]
