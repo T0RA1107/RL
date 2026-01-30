@@ -57,6 +57,12 @@ class RLTrainer:
         self.checkpoint_dir = Path(cfg.path.run_dir) / cfg.path.ckpt_dir
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        # Rendering configuration
+        self.rendering_enabled = cfg.rendering.enabled
+        self.video_dir = Path(cfg.path.run_dir) / "gifs"
+        if self.rendering_enabled:
+            self.video_dir.mkdir(parents=True, exist_ok=True)
+
         # Metrics tracking
         self.episode_rewards = []
         self.episode_lengths = []
@@ -75,13 +81,10 @@ class RLTrainer:
         # Detect if agent is on-policy (has rollout_buffer) or off-policy (has replay_buffer)
         is_onpolicy = self.agent.isonpolicy
 
-        vmap_reset = jax.vmap(self.environment.reset)
-        vmap_step = jax.vmap(self.environment.step)
-
         # Reset environment
         rng = jax.random.split(self.rng, n_env + 1)
         self.rng, reset_rng = rng[0], rng[1:]
-        obs, env_state = vmap_reset(reset_rng)
+        obs, env_state = self.environment.reset(reset_rng)
 
         episode_reward = jnp.zeros(n_env)
         episode_length = jnp.zeros(n_env, dtype=jnp.int32)
@@ -110,7 +113,7 @@ class RLTrainer:
             # Step environment
             rng = jax.random.split(self.rng, n_env + 1)
             self.rng, step_rng = rng[0], rng[1:]
-            next_obs, env_state, reward, done, env_info = vmap_step(
+            next_obs, env_state, reward, done, env_info = self.environment.step(
                 env_state, action, step_rng
             )
 
@@ -137,13 +140,19 @@ class RLTrainer:
         loss_info = {k: v / episode_length.mean() for k, v in loss_info.items()}
         return episode_reward, episode_length, loss_info
 
-    def evaluate(self) -> dict:
+    def evaluate(self, episode: int | None = None) -> dict:
         """Run evaluation episodes.
+
+        Args:
+            episode: Current training episode (for video filename)
 
         Returns:
             Dictionary of evaluation metrics
         """
         logger.info("Running evaluation...")
+
+        if self.rendering_enabled:
+            self.environment.start_recording()
 
         eval_rewards, eval_lengths, _ = self.run_episode(
             n_env=self.eval_episodes, training=False
@@ -160,6 +169,12 @@ class RLTrainer:
             f"(±{metrics['eval/std_reward']:.2f}), "
             f"mean_length={metrics['eval/mean_length']:.1f}"
         )
+
+        if self.rendering_enabled:
+            episode_str = f"episode_{episode}" if episode is not None else "final"
+            video_path = self.video_dir / f"eval_{episode_str}.gif"
+            self.environment.save_video(video_path)
+            logger.info(f"Saved evaluation video: {video_path}")
 
         return metrics
 
@@ -223,7 +238,7 @@ class RLTrainer:
 
             # Periodic evaluation
             if episode % self.eval_frequency == 0:
-                eval_metrics = self.evaluate()
+                eval_metrics = self.evaluate(episode=episode)
                 log_metrics(eval_metrics, episode, self.wandb_enabled)
 
             # Save checkpoint

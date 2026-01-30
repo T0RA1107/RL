@@ -1,8 +1,11 @@
 """Gymnax environment wrapper for consistent interface."""
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import gymnax
+from gymnax.visualize import Visualizer
 from typing import Tuple, Any, Union
 
 
@@ -25,16 +28,28 @@ class GymnaxWrapper:
         # Create the Gymnax environment
         self.env, self.env_params = gymnax.make(env_name, **self.env_kwargs)
 
+        # Vectorized methods (vmap over batch dimension)
+        self._vmap_reset = jax.vmap(
+            lambda rng: self.env.reset(rng, self.env_params)
+        )
+        self._vmap_step = jax.vmap(
+            lambda state, action, rng: self.env.step(rng, state, action, self.env_params)
+        )
+
+        # Rendering state
+        self._recording = False
+        self._states: list = []
+
     def reset(self, rng: jax.random.PRNGKey) -> Tuple[jnp.ndarray, Any]:
-        """Reset the environment.
+        """Reset the environment (vectorized).
 
         Args:
-            rng: JAX random number generator key
+            rng: JAX random keys with shape (n_envs,) or (n_envs, 2)
 
         Returns:
-            Tuple of (observation, environment_state)
+            Tuple of (observations, states) with batch dimension
         """
-        obs, state = self.env.reset(rng, self.env_params)
+        obs, state = self._vmap_reset(rng)
         return obs, state
 
     def step(
@@ -43,20 +58,53 @@ class GymnaxWrapper:
         action: Union[int, jnp.ndarray],
         rng: jax.random.PRNGKey
     ) -> Tuple[jnp.ndarray, Any, float, bool, dict]:
-        """Execute one step in the environment.
+        """Execute one step (vectorized).
 
         Args:
-            state: Current environment state
-            action: Action to take (int for discrete, jnp.ndarray for continuous)
-            rng: JAX random number generator key
+            state: Batched environment states
+            action: Batched actions
+            rng: Batched random keys
 
         Returns:
-            Tuple of (next_observation, next_state, reward, done, info)
+            Tuple of batched (next_obs, next_state, reward, done, info)
         """
-        next_obs, next_state, reward, done, info = self.env.step(
-            rng, state, action, self.env_params
-        )
+        if self._recording:
+            self._states.append(state)
+
+        next_obs, next_state, reward, done, info = self._vmap_step(state, action, rng)
         return next_obs, next_state, reward, done, info
+
+    def start_recording(self) -> None:
+        """Start recording environment states for video generation."""
+        self._recording = True
+        self._states = []
+
+    def stop_recording(self) -> None:
+        """Stop recording environment states."""
+        self._recording = False
+
+    def save_video(self, save_path: str | Path) -> None:
+        """Save recorded states as mp4 video.
+
+        Args:
+            save_path: Path to save the video
+        """
+        if not self._states:
+            return
+
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        states = []
+        for state in self._states:
+            first_state  = jax.tree_util.tree_map(lambda x: x[0], state)
+            states.append(first_state)
+
+        vis = Visualizer(self.env, self.env_params, states)
+        vis.animate(str(save_path))
+
+        # Clear buffer and stop recording
+        self._states = []
+        self._recording = False
 
     def get_observation_space(self) -> int:
         """Get the observation space dimension.

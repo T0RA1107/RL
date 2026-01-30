@@ -4,4 +4,5 @@ uv run ./src/train.py \
   network=actor_critic \
   optimizer=actor_critic_adam \
   training.num_episodes=500 \
-  wandb.enabled=false
+  wandb.enabled=false \
+  rendering.enabled=true
