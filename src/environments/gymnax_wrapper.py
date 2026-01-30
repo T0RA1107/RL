@@ -84,10 +84,14 @@ class GymnaxWrapper:
         self._recording = False
 
     def save_video(self, save_path: str | Path) -> None:
-        """Save recorded states as mp4 video.
+        """Save recorded states as an animation to the given path.
+
+        The actual file format is determined by the provided filename/extension
+        and the underlying Gymnax ``Visualizer.animate`` implementation (e.g.,
+        in current usage this is typically a GIF).
 
         Args:
-            save_path: Path to save the video
+            save_path: Path where the animation file will be saved.
         """
         if not self._states:
             return
