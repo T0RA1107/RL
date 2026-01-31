@@ -1,4 +1,6 @@
-# RL Project - JAX/Flax/rlax Reinforcement Learning Framework
+# RLerneX - JAX/Flax/rlax Reinforcement Learning Framework
+
+> **RL** + **Lerne** (Lernaean in French) + **X** (JAX)
 
 A modular reinforcement learning framework built with JAX, Flax, rlax, and Gymnax. Features Hydra configuration management and Weights & Biases integration for experiment tracking.
 
@@ -22,7 +24,7 @@ A modular reinforcement learning framework built with JAX, Flax, rlax, and Gymna
 ## Project Structure
 
 ```
-RL/
+RLerneX/
 ├── configs/                      # Hydra configuration files
 │   ├── train.yaml               # Main training config
 │   ├── environment/             # Environment configs

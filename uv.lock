@@ -1080,7 +1080,25 @@ wheels = [
 ]
 
 [[package]]
-name = "rl"
+name = "rlax"
+version = "0.1.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "chex" },
+    { name = "distrax" },
+    { name = "dm-env" },
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/94/96/5e68f3dac7a4cc730ffa5885f9c057023daa86384dc29a8c6da0fb65c7ae/rlax-0.1.8.tar.gz", hash = "sha256:4ec5dcd3969099e8699a979b15b967187ce2536bba467ad7c1d980f1eeade541", size = 84704, upload-time = "2025-09-01T23:40:00.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/0e/04727f672ba609c4d4ed9f9be82cc1e7afb0d7355051f9f406b55defac10/rlax-0.1.8-py3-none-any.whl", hash = "sha256:c6d5c45cc6727dd7ad58baacf12b92ca53568d7d68063b8a97f3c5c36552cb8f", size = 116178, upload-time = "2025-09-01T23:39:58.593Z" },
+]
+
+[[package]]
+name = "rlernex"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -1116,24 +1134,6 @@ requires-dist = [
     { name = "pyinstrument", specifier = ">=5.1.2" },
     { name = "rlax", specifier = ">=0.1.8" },
     { name = "wandb", specifier = ">=0.18.11" },
-]
-
-[[package]]
-name = "rlax"
-version = "0.1.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "absl-py" },
-    { name = "chex" },
-    { name = "distrax" },
-    { name = "dm-env" },
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/94/96/5e68f3dac7a4cc730ffa5885f9c057023daa86384dc29a8c6da0fb65c7ae/rlax-0.1.8.tar.gz", hash = "sha256:4ec5dcd3969099e8699a979b15b967187ce2536bba467ad7c1d980f1eeade541", size = 84704, upload-time = "2025-09-01T23:40:00.106Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/0e/04727f672ba609c4d4ed9f9be82cc1e7afb0d7355051f9f406b55defac10/rlax-0.1.8-py3-none-any.whl", hash = "sha256:c6d5c45cc6727dd7ad58baacf12b92ca53568d7d68063b8a97f3c5c36552cb8f", size = 116178, upload-time = "2025-09-01T23:39:58.593Z" },
 ]
 
 [[package]]

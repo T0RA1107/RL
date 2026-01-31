@@ -1,7 +1,7 @@
 [project]
-name = "rl"
+name = "rlernex"
 version = "0.1.0"
-description = "Add your description here"
+description = "A modular reinforcement learning framework built with JAX, Flax, rlax, and Gymnax. Features Hydra configuration management."
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
