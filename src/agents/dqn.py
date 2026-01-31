@@ -6,6 +6,7 @@ from jaxtyping import Array, Float, Int, Bool
 import rlax
 from flax.training import train_state
 from omegaconf import DictConfig
+import optax
 import pickle
 
 from src.agents.base import BaseAgent
@@ -30,6 +31,7 @@ class DQNAgent(BaseAgent):
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.01,
         epsilon_decay: float = 0.995,
+        max_grad_norm: float = 0.5,
         n_env: int = 8,
         batch_size: int = 64,
         buffer_size: int = 10000,
@@ -61,6 +63,7 @@ class DQNAgent(BaseAgent):
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
+        self.max_grad_norm = max_grad_norm
         self.n_env = n_env
         self.batch_size = batch_size
         self.learning_starts = learning_starts
@@ -85,6 +88,10 @@ class DQNAgent(BaseAgent):
 
         # Create optimizer
         optimizer = hydra.utils.instantiate(optimizer_cfg)
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(self.max_grad_norm),
+            optimizer
+        )
 
         # Create train state with target network
         self.state = TrainState.create(
